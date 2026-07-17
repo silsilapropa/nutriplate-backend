@@ -6,17 +6,13 @@ RUN apt-get update && apt-get install -y libcurl4-openssl-dev pkg-config && rm -
 # Install ekstensi PHP yang dibutuhkan (mysqli buat database, curl buat panggil API eksternal)
 RUN docker-php-ext-install mysqli curl
 
-# Aktifkan mod_rewrite (opsional tapi umum dipakai)
-RUN a2enmod rewrite
+# Pastikan cuma 1 modul MPM yang aktif (fix konflik "More than one MPM loaded")
+RUN a2dismod mpm_event mpm_worker 2>/dev/null; a2enmod mpm_prefork
 
 # Copy semua file project ke folder web server
 COPY . /var/www/html/
 
-# Railway kasih PORT lewat environment variable, arahkan Apache ke situ
-RUN sed -i 's/80/${PORT}/g' /etc/apache2/sites-available/000-default.conf /etc/apache2/ports.conf
 ENV PORT=80
 EXPOSE 80
 
-CMD sed -i "s/Listen 80/Listen ${PORT}/g" /etc/apache2/ports.conf && \
-    sed -i "s/:80/:${PORT}/g" /etc/apache2/sites-available/000-default.conf && \
-    apache2-foreground
+CMD sh -c "sed -i \"s/Listen 80/Listen \$PORT/g\" /etc/apache2/ports.conf && sed -i \"s/:80/:\$PORT/g\" /etc/apache2/sites-available/000-default.conf && apache2-foreground"
