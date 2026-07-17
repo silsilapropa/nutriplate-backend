@@ -1,5 +1,8 @@
 FROM php:8.2-apache
 
+# Install library sistem yang dibutuhkan (libcurl buat ekstensi curl PHP)
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev pkg-config && rm -rf /var/lib/apt/lists/*
+
 # Install ekstensi PHP yang dibutuhkan (mysqli buat database, curl buat panggil API eksternal)
 RUN docker-php-ext-install mysqli curl
 
