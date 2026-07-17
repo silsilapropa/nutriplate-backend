@@ -6,8 +6,13 @@ RUN apt-get update && apt-get install -y libcurl4-openssl-dev pkg-config && rm -
 # Install ekstensi PHP yang dibutuhkan (mysqli buat database, curl buat panggil API eksternal)
 RUN docker-php-ext-install mysqli curl
 
-# Pastikan cuma 1 modul MPM yang aktif (fix konflik "More than one MPM loaded")
-RUN a2dismod mpm_event mpm_worker 2>/dev/null; a2enmod mpm_prefork
+# Paksa hapus konfigurasi MPM yang konflik, sisakan cuma mpm_prefork
+RUN rm -f /etc/apache2/mods-enabled/mpm_event.conf \
+           /etc/apache2/mods-enabled/mpm_event.load \
+           /etc/apache2/mods-enabled/mpm_worker.conf \
+           /etc/apache2/mods-enabled/mpm_worker.load \
+    && ln -sf /etc/apache2/mods-available/mpm_prefork.load /etc/apache2/mods-enabled/mpm_prefork.load \
+    && ln -sf /etc/apache2/mods-available/mpm_prefork.conf /etc/apache2/mods-enabled/mpm_prefork.conf
 
 # Copy semua file project ke folder web server
 COPY . /var/www/html/
