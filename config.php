@@ -13,8 +13,8 @@ define('DB_PORT', 3306);
 define('USDA_API_KEY', '9xgOkTAwofOm7NpZhd3uaZMhXbTteUV0hH5NKLks');
 define('USDA_BASE_URL', 'https://api.nal.usda.gov/fdc/v1');
 
-// Google Gemini API Key (untuk analisis foto makanan)
-define('GEMINI_API_KEY', 'GANTI_DENGAN_KEY_GEMINI_BARU_KAMU');
+// Hugging Face API Key (untuk analisis foto makanan, gratis tanpa billing)
+define('HUGGINGFACE_API_KEY', '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');
 
 // Koneksi database (mysqli)
 function getDbConnection() {
