@@ -21,7 +21,7 @@ $imageBinary = base64_decode($base64Image);
 
 // ---------- STEP 1: Klasifikasi gambar makanan pakai Hugging Face (gratis) ----------
 $hfModel = 'Kaludi/food-category-classification-v2.0';
-$hfUrl = 'https://api-inference.huggingface.co/models/' . $hfModel;
+$hfUrl = 'https://router.huggingface.co/hf-inference/models/' . $hfModel;
 
 $ch = curl_init($hfUrl);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
