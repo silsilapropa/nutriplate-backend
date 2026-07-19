@@ -31,13 +31,14 @@ curl_setopt($ch, CURLOPT_HTTPHEADER, [
     'Authorization: Bearer ' . HUGGINGFACE_API_KEY,
     'Content-Type: image/jpeg'
 ]);
-curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+curl_setopt($ch, CURLOPT_TIMEOUT, 60);
 $response = curl_exec($ch);
+$curlErr = curl_error($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
 if ($httpCode !== 200) {
-    sendResponse(false, 'Gagal mengklasifikasi gambar (Hugging Face kode: ' . $httpCode . '): ' . $response, null, 502);
+    sendResponse(false, 'Gagal mengklasifikasi gambar (Hugging Face kode: ' . $httpCode . ', curl error: ' . $curlErr . '): ' . $response, null, 502);
 }
 
 $classifications = json_decode($response, true);
