@@ -6,7 +6,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     sendResponse(false, 'Method tidak diizinkan', null, 405);
 }
 
-// Terima gambar dalam bentuk base64 lewat JSON body
 $input = getJsonInput();
 $base64Image = $input['image_base64'] ?? null;
 
@@ -14,62 +13,91 @@ if (empty($base64Image)) {
     sendResponse(false, 'Gambar tidak ditemukan', null, 400);
 }
 
-// Bersihkan prefix data URI kalau ada (misal "data:image/jpeg;base64,...")
 if (strpos($base64Image, ',') !== false) {
     $base64Image = explode(',', $base64Image, 2)[1];
 }
 
-$prompt = "Kamu adalah asisten analisis gizi. Lihat foto makanan ini dan identifikasi SEMUA jenis makanan/lauk yang terlihat (bisa lebih dari satu, misal nasi + ayam + sayur dihitung terpisah). " .
-    "Untuk setiap item, perkirakan porsi yang wajar dan kandungan gizinya. " .
-    "Balas HANYA dalam format JSON array murni, TANPA teks tambahan, TANPA markdown code block, dengan struktur persis seperti ini: " .
-    '[{"name":"Nama Makanan","portion":"perkiraan porsi contoh 1 piring (250 g)","calories":000,"protein_g":00,"carbs_g":00,"fat_g":00}]' .
-    " Gunakan nama makanan dalam Bahasa Indonesia jika makanan tersebut adalah makanan Indonesia. Jika tidak ada makanan yang terdeteksi, balas dengan array kosong [].";
+$imageBinary = base64_decode($base64Image);
 
-$payload = [
-    'contents' => [[
-        'parts' => [
-            ['text' => $prompt],
-            ['inline_data' => [
-                'mime_type' => 'image/jpeg',
-                'data' => $base64Image
-            ]]
-        ]
-    ]],
-    'generationConfig' => [
-        'temperature' => 0.2
-    ]
-];
+// ---------- STEP 1: Klasifikasi gambar makanan pakai Hugging Face (gratis) ----------
+$hfModel = 'Kaludi/food-category-classification-v2.0';
+$hfUrl = 'https://api-inference.huggingface.co/models/' . $hfModel;
 
-$geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' . GEMINI_API_KEY;
-
-$ch = curl_init($geminiUrl);
+$ch = curl_init($hfUrl);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+curl_setopt($ch, CURLOPT_POSTFIELDS, $imageBinary);
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'Authorization: Bearer ' . HUGGINGFACE_API_KEY,
+    'Content-Type: image/jpeg'
+]);
 curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
 if ($httpCode !== 200) {
-    sendResponse(false, 'Gagal menganalisis gambar (Gemini API kode: ' . $httpCode . '): ' . $response, null, 502);
+    sendResponse(false, 'Gagal mengklasifikasi gambar (Hugging Face kode: ' . $httpCode . '): ' . $response, null, 502);
 }
 
-$geminiData = json_decode($response, true);
-$text = $geminiData['candidates'][0]['content']['parts'][0]['text'] ?? '';
+$classifications = json_decode($response, true);
 
-// Bersihkan kalau Gemini tetap membungkus dengan markdown code block
-$text = trim($text);
-$text = preg_replace('/^```json\s*/i', '', $text);
-$text = preg_replace('/^```\s*/', '', $text);
-$text = preg_replace('/```$/', '', $text);
-$text = trim($text);
-
-$foods = json_decode($text, true);
-
-if (!is_array($foods)) {
-    sendResponse(false, 'Gagal memahami hasil analisis AI, coba foto ulang dengan pencahayaan lebih jelas', null, 500);
+if (!is_array($classifications) || empty($classifications)) {
+    sendResponse(false, 'Tidak ada makanan yang terdeteksi pada gambar, coba foto ulang', null, 500);
 }
 
-sendResponse(true, 'Berhasil menganalisis gambar makanan', $foods);
+usort($classifications, fn($a, $b) => $b['score'] <=> $a['score']);
+$topLabel = $classifications[0]['label'] ?? null;
+$confidence = $classifications[0]['score'] ?? 0;
+
+if (!$topLabel) {
+    sendResponse(false, 'Gagal membaca hasil klasifikasi', null, 500);
+}
+
+$cleanLabel = str_replace('_', ' ', $topLabel);
+
+// ---------- STEP 2: Cari data gizi lewat USDA API berdasarkan nama makanan hasil deteksi ----------
+$usdaUrl = USDA_BASE_URL . '/foods/search?query=' . urlencode($cleanLabel) . '&pageSize=3&api_key=' . USDA_API_KEY;
+
+$ch = curl_init($usdaUrl);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+$usdaResponse = curl_exec($ch);
+$usdaHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+curl_close($ch);
+
+$result = [
+    'detected_label' => $cleanLabel,
+    'confidence' => round($confidence * 100, 1),
+    'name' => ucwords($cleanLabel),
+    'portion' => '1 porsi (~250 g)',
+    'calories' => 0,
+    'protein_g' => 0,
+    'carbs_g' => 0,
+    'fat_g' => 0
+];
+
+if ($usdaHttpCode === 200) {
+    $usdaData = json_decode($usdaResponse, true);
+    $firstFood = $usdaData['foods'][0] ?? null;
+
+    if ($firstFood) {
+        $nutrients = ['calories' => 0, 'protein_g' => 0, 'carbs_g' => 0, 'fat_g' => 0];
+        foreach (($firstFood['foodNutrients'] ?? []) as $n) {
+            $name = strtolower($n['nutrientName'] ?? '');
+            $value = $n['value'] ?? 0;
+            if (strpos($name, 'energy') !== false) $nutrients['calories'] = $value;
+            elseif (strpos($name, 'protein') !== false) $nutrients['protein_g'] = $value;
+            elseif (strpos($name, 'carbohydrate') !== false) $nutrients['carbs_g'] = $value;
+            elseif ($name === 'total lipid (fat)') $nutrients['fat_g'] = $value;
+        }
+        $result['name'] = ucwords($cleanLabel) . ' (' . $firstFood['description'] . ')';
+        $result['portion'] = '100 g (estimasi, sesuaikan dengan porsi aslimu)';
+        $result['calories'] = $nutrients['calories'];
+        $result['protein_g'] = $nutrients['protein_g'];
+        $result['carbs_g'] = $nutrients['carbs_g'];
+        $result['fat_g'] = $nutrients['fat_g'];
+    }
+}
+
+sendResponse(true, 'Berhasil menganalisis gambar makanan', [$result]);
